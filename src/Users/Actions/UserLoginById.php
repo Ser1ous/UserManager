@@ -1,4 +1,4 @@
-<?php namespace EvolutionCMS\Users\Acttions;
+<?php namespace EvolutionCMS\Users\Actions;
 
 use EvolutionCMS\Exceptions\ServiceActionException;
 use EvolutionCMS\Exceptions\ServiceValidationException;
