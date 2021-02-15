@@ -1,4 +1,4 @@
-<?php namespace EvolutionCMS\Users;
+<?php namespace EvolutionCMS\Users\Providers;
 
 use \EvolutionCMS\Users\UserManager;
 use Illuminate\Support\ServiceProvider;
