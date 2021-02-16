@@ -1,4 +1,4 @@
-<?php namespace EvolutionCMS\Users\Facades;
+<?php namespace EvolutionCMS\Facades;
 
 use Illuminate\Support\Facades\Facade;
 
