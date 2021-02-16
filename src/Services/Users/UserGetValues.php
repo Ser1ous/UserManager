@@ -1,12 +1,12 @@
-<?php namespace EvolutionCMS\Users\Actions;
+<?php namespace EvolutionCMS\Services\Users;
 
 use EvolutionCMS\Exceptions\ServiceActionException;
 use EvolutionCMS\Exceptions\ServiceValidationException;
 use EvolutionCMS\Interfaces\ServiceInterface;
-use \EvolutionCMS\Models\User;
+use EvolutionCMS\Models\UserValue;
 use Illuminate\Support\Facades\Lang;
 
-class UserHashChangePassword implements ServiceInterface
+class UserGetValues implements ServiceInterface
 {
     /**
      * @var \string[][]
@@ -38,7 +38,6 @@ class UserHashChangePassword implements ServiceInterface
      */
     public $validateErrors;
 
-
     /**
      * UserRegistration constructor.
      * @param array $userData
@@ -47,11 +46,11 @@ class UserHashChangePassword implements ServiceInterface
      */
     public function __construct(array $userData, bool $events = true, bool $cache = true)
     {
-        $this->validate = $this->getValidationRules();
-        $this->messages = $this->getValidationMessages();
         $this->userData = $userData;
         $this->events = $events;
         $this->cache = $cache;
+        $this->validate = $this->getValidationRules();
+        $this->messages = $this->getValidationMessages();
     }
 
     /**
@@ -59,10 +58,7 @@ class UserHashChangePassword implements ServiceInterface
      */
     public function getValidationRules(): array
     {
-        return [
-            'hash' => ['required'],
-            'password' => ['required', 'min:6', 'confirmed'],
-        ];
+        return ['id' => ['required']];
     }
 
     /**
@@ -70,13 +66,7 @@ class UserHashChangePassword implements ServiceInterface
      */
     public function getValidationMessages(): array
     {
-        return [
-            'hash.required' => Lang::get("global.required_field", ['field' => 'hash']),
-            'password.required' => Lang::get("global.required_field", ['field' => 'password']),
-            'password.confirmed' => Lang::get("global.password_confirmed", ['field' => 'password']),
-            'password.min' => Lang::get("global.password_gen_length"),
-
-        ];
+        return ['id.required' => Lang::get("global.required_field", ['field' => 'username'])];
     }
 
     /**
@@ -84,11 +74,12 @@ class UserHashChangePassword implements ServiceInterface
      * @throws ServiceActionException
      * @throws ServiceValidationException
      */
-    public function process(): string
+    public function process(): array
     {
         if (!$this->checkRules()) {
             throw new ServiceActionException(\Lang::get('global.error_no_privileges'));
         }
+
 
         if (!$this->validate()) {
             $exception = new ServiceValidationException();
@@ -96,21 +87,22 @@ class UserHashChangePassword implements ServiceInterface
             throw $exception;
         }
 
-        $user = \EvolutionCMS\Models\User::where('cachepwd', $this->userData['hash'])->first();
-        if (is_null($user)) {
-            throw new ServiceActionException(\Lang::get('global.could_not_find_user'));
-        }
-        $user->password = EvolutionCMS()->getPasswordHash()->HashPassword($this->userData['password']);
-        $user->cachepwd = '';
-        $user->save();
+        $values = UserValue::query()
+            ->select('site_tmplvars.name', 'user_values.value')
+            ->join('site_tmplvars', 'site_tmplvars.id', '=', 'user_values.tmplvarid')
+            ->where('userid', $this->userData['id'])
+            ->when(!empty($this->userData['tvNames']), function($query) {
+                $query->whereIn('site_tmplvars.name', $this->userData['tvNames']);
+            })
+            ->get()
+            ->pluck('value', 'name')
+            ->toArray();
 
-        // invoke OnManagerChangePassword event
-        EvolutionCMS()->invokeEvent('OnUserChangePassword', array(
-            'userid' => $this->userData['id'],
-            'username' => $_SESSION['mgrShortname'],
-            'userpassword' => $this->userData['password']
-        ));
-        return $user;
+        if ($this->cache) {
+            EvolutionCMS()->clearCache('full');
+        }
+
+        return $values;
     }
 
     /**
@@ -126,10 +118,7 @@ class UserHashChangePassword implements ServiceInterface
      */
     public function validate(): bool
     {
-        $validator = \Validator::make($this->userData, $this->validate, $this->messages);
-        $this->validateErrors = $validator->errors()->toArray();
-        return !$validator->fails();
+        return true;
     }
-
 
 }

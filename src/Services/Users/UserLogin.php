@@ -1,4 +1,4 @@
-<?php namespace EvolutionCMS\Users\Actions;
+<?php namespace EvolutionCMS\Services\Users;
 
 use EvolutionCMS\Exceptions\ServiceActionException;
 use EvolutionCMS\Exceptions\ServiceValidationException;
@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Lang;
 use Carbon\Carbon;
 use Illuminate\Support\Str;
 
-class UserLoginById extends UserLogin
+class UserLogin implements ServiceInterface
 {
     /**
      * @var \string[][]
@@ -80,7 +80,8 @@ class UserLoginById extends UserLogin
      */
     public function getValidationRules(): array
     {
-        return ['id' => ['required']];
+        return ['username' => ['required'],
+                'password' => ['required']];
     }
 
     /**
@@ -88,7 +89,8 @@ class UserLoginById extends UserLogin
      */
     public function getValidationMessages(): array
     {
-        return ['id.required' => Lang::get("global.required_field", ['field' => 'username'])];
+        return ['username.required' => Lang::get("global.required_field", ['field' => 'username']),
+                'password.required' => Lang::get("global.required_field", ['field' => 'password'])];
     }
 
     /**
@@ -107,20 +109,24 @@ class UserLoginById extends UserLogin
             $exception->setValidationErrors($this->validateErrors);
             throw $exception;
         }
-        $this->user = \EvolutionCMS\Models\User::query()->find($this->userData['id']);
-        if (is_null($this->user)) {
-            throw new ServiceActionException(\Lang::get('global.login_processor_unknown_user'));
-        }
+
         if ($this->events) {
             // invoke OnBeforeManagerLogin event
             EvolutionCMS()->invokeEvent('OnBeforeManagerLogin', array(
-                'username' => $this->user->username,
+                'username' => $this->userData['username'],
+                'userpassword' => $this->userData['password'],
+                'rememberme' => $this->userData['rememberme']
             ));
         }
 
-
+        $this->user = \EvolutionCMS\Models\User::query()
+            ->where('username', $this->userData['username'])->first();
+        if (is_null($this->user)) {
+            throw new ServiceActionException(\Lang::get('global.login_processor_unknown_user'));
+        }
         $this->userSettings = $this->user->settings->pluck('setting_value', 'setting_name')->toArray();
 
+        $this->checkPassword();
         $this->validateAuth();
         $this->authProcess();
         $this->checkRemember();
@@ -132,6 +138,8 @@ class UserLoginById extends UserLogin
             EvolutionCMS()->invokeEvent('OnManagerLogin', array(
                 'userid' => $this->user->getKey(),
                 'username' => $this->user->username,
+                'userpassword' => $this->userData['password'],
+                'rememberme' => $this->userData['rememberme']
             ));
         }
 
@@ -342,7 +350,41 @@ class UserLoginById extends UserLogin
 
     public function checkPassword()
     {
-        return true;
+        if ($this->events) {
+            // invoke OnManagerAuthentication event
+            $rt = EvolutionCMS()->invokeEvent('OnManagerAuthentication', array(
+                'userid' => $this->user->getKey(),
+                'username' => $this->user->username,
+                'userpassword' => $this->userData['password'],
+                'savedpassword' => $this->user->password,
+                'rememberme' => $this->userData['rememberme']
+            ));
+        }
+
+        // check if plugin authenticated the user
+        $matchPassword = false;
+        if (!isset($rt) || !$rt || (is_array($rt) && !in_array(true, $rt))) {
+            // check user password - local authentication
+            $hashType = EvolutionCMS()->getManagerApi()->getHashType($this->user->password);
+
+            if ($hashType == 'phpass') {
+                $matchPassword = login($this->user->username, $this->userData['password'], $this->user->password);
+            } elseif ($hashType == 'md5') {
+                $matchPassword = loginMD5($this->user->getKey(), $this->userData['password'], $this->user->password, $this->user->username);
+            } elseif ($hashType == 'v1') {
+                $matchPassword = loginV1($this->user->getKey(), $this->userData['password'], $this->user->password, $this->user->username);
+            } else {
+                $matchPassword = false;
+            }
+
+        } else if ($rt === true || (is_array($rt) && in_array(true, $rt))) {
+            $matchPassword = true;
+        }
+
+        if (!$matchPassword) {
+            $this->incrementFailedLoginCount();
+            throw new ServiceActionException(\Lang::get('global.login_processor_wrong_password'));
+        }
     }
 
 }

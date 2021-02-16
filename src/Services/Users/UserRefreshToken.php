@@ -1,12 +1,14 @@
-<?php namespace EvolutionCMS\Users\Actions;
+<?php namespace EvolutionCMS\Services\Users;
 
 use EvolutionCMS\Exceptions\ServiceActionException;
 use EvolutionCMS\Exceptions\ServiceValidationException;
 use EvolutionCMS\Interfaces\ServiceInterface;
 use \EvolutionCMS\Models\User;
 use Illuminate\Support\Facades\Lang;
+use Carbon\Carbon;
+use Illuminate\Support\Str;
 
-class UserGeneratePassword implements ServiceInterface
+class UserRefreshToken implements ServiceInterface
 {
     /**
      * @var \string[][]
@@ -38,9 +40,26 @@ class UserGeneratePassword implements ServiceInterface
      */
     public $validateErrors;
 
+    /**
+     * @var User
+     */
+    public $user;
+    /**
+     * @var int
+     */
+    private $blockedMinutes;
+    /**
+     * @var int
+     */
+    private $failedLoginAttempts;
 
     /**
-     * UserRegistration constructor.
+     * @var
+     */
+    private $userSettings;
+
+    /**
+     * UserRefreshToken constructor.
      * @param array $userData
      * @param bool $events
      * @param bool $cache
@@ -59,9 +78,7 @@ class UserGeneratePassword implements ServiceInterface
      */
     public function getValidationRules(): array
     {
-        return [
-            'id' => ['required', 'exists:users'],
-        ];
+        return ['refresh_token' => ['required', 'exists:users']];
     }
 
     /**
@@ -69,18 +86,15 @@ class UserGeneratePassword implements ServiceInterface
      */
     public function getValidationMessages(): array
     {
-        return [
-            'id.required' => Lang::get("global.required_field", ['field' => 'id']),
-            'id.exists' => Lang::get("global.could_not_find_user"),
-        ];
+        return ['refresh_token.required' => Lang::get("global.required_field", ['field' => 'refresh_token'])];
     }
 
     /**
-     * @return string
+     * @return \Illuminate\Database\Eloquent\Model
      * @throws ServiceActionException
      * @throws ServiceValidationException
      */
-    public function process(): string
+    public function process(): \Illuminate\Database\Eloquent\Model
     {
         if (!$this->checkRules()) {
             throw new ServiceActionException(\Lang::get('global.error_no_privileges'));
@@ -91,11 +105,19 @@ class UserGeneratePassword implements ServiceInterface
             $exception->setValidationErrors($this->validateErrors);
             throw $exception;
         }
-        $user = User::find($this->userData['id']);
-        $password = generate_password(8);
-        $user->password =  EvolutionCMS()->getPasswordHash()->HashPassword($password);
+
+
+        $user = \EvolutionCMS\Models\User::query()
+            ->where('refresh_token', $this->userData['refresh_token'])->first();
+        if (is_null($user)) {
+            throw new ServiceActionException(\Lang::get('global.could_not_find_user'));
+        }
+
+        $user->access_token = hash('sha256', Str::random(32));
+        $user->valid_to = Carbon::now()->addHours(11);
         $user->save();
-        return $password;
+
+        return $user;
     }
 
     /**

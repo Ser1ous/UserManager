@@ -1,11 +1,12 @@
-<?php namespace EvolutionCMS\Users\Actions;
+<?php namespace EvolutionCMS\Services\Users;
 
 use EvolutionCMS\Exceptions\ServiceActionException;
 use EvolutionCMS\Exceptions\ServiceValidationException;
 use EvolutionCMS\Interfaces\ServiceInterface;
 use \EvolutionCMS\Models\User;
+use Illuminate\Support\Facades\Lang;
 
-class UserGetVerifiedKey implements ServiceInterface
+class UserGeneratePassword implements ServiceInterface
 {
     /**
      * @var \string[][]
@@ -37,6 +38,7 @@ class UserGetVerifiedKey implements ServiceInterface
      */
     public $validateErrors;
 
+
     /**
      * UserRegistration constructor.
      * @param array $userData
@@ -57,7 +59,9 @@ class UserGetVerifiedKey implements ServiceInterface
      */
     public function getValidationRules(): array
     {
-        return ['id' => ['required']];
+        return [
+            'id' => ['required', 'exists:users'],
+        ];
     }
 
     /**
@@ -65,15 +69,18 @@ class UserGetVerifiedKey implements ServiceInterface
      */
     public function getValidationMessages(): array
     {
-        return [];
+        return [
+            'id.required' => Lang::get("global.required_field", ['field' => 'id']),
+            'id.exists' => Lang::get("global.could_not_find_user"),
+        ];
     }
 
     /**
-     * @return \Illuminate\Database\Eloquent\Model
+     * @return string
      * @throws ServiceActionException
      * @throws ServiceValidationException
      */
-    public function process(): \Illuminate\Database\Eloquent\Model
+    public function process(): string
     {
         if (!$this->checkRules()) {
             throw new ServiceActionException(\Lang::get('global.error_no_privileges'));
@@ -84,16 +91,11 @@ class UserGetVerifiedKey implements ServiceInterface
             $exception->setValidationErrors($this->validateErrors);
             throw $exception;
         }
-
         $user = User::find($this->userData['id']);
-        if (is_null($user)) {
-            throw new ServiceActionException(\Lang::get('global.user_doesnt_exist'));
-        }
-        $hash = md5(generate_password(10) . time());
-        $user->verified_key = $hash;
+        $password = generate_password(8);
+        $user->password =  EvolutionCMS()->getPasswordHash()->HashPassword($password);
         $user->save();
-
-        return $user;
+        return $password;
     }
 
     /**
@@ -113,5 +115,6 @@ class UserGetVerifiedKey implements ServiceInterface
         $this->validateErrors = $validator->errors()->toArray();
         return !$validator->fails();
     }
+
 
 }

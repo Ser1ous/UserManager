@@ -1,4 +1,4 @@
-<?php namespace EvolutionCMS\Users\Actions;
+<?php namespace EvolutionCMS\Services\Users;
 
 use EvolutionCMS\Exceptions\ServiceActionException;
 use EvolutionCMS\Exceptions\ServiceValidationException;
@@ -7,8 +7,10 @@ use \EvolutionCMS\Models\User;
 use Illuminate\Support\Facades\Lang;
 use Illuminate\Validation\Rule;
 
-class UserClearSettings implements ServiceInterface
+class UserSaveSettings implements ServiceInterface
 {
+    use ExcludeStandardFieldsTrait;
+
     /**
      * @var \string[][]
      */
@@ -59,7 +61,7 @@ class UserClearSettings implements ServiceInterface
      */
     public function getValidationRules(): array
     {
-        return ['id' => ['required'],];
+        return [];
     }
 
     /**
@@ -67,7 +69,7 @@ class UserClearSettings implements ServiceInterface
      */
     public function getValidationMessages(): array
     {
-        return ['id.required' => Lang::get("global.required_field", ['field' => 'id'])];
+        return [];
     }
 
     /**
@@ -88,8 +90,40 @@ class UserClearSettings implements ServiceInterface
             throw $exception;
         }
 
-        \EvolutionCMS\Models\UserSetting::where('user', $this->userData['id'])->delete();
+        // determine which settings can be saved blank (based on 'default_{settingname}' POST checkbox values)
+        $defaults = array(
+            'upload_images',
+            'upload_media',
+            'upload_flash',
+            'upload_files'
+        );
 
+        // get user setting field names
+        $customFields = $this->excludeStandardFields($this->userData);
+
+        foreach ($customFields as $n => $v) {
+            if (!in_array($n, $defaults) && (is_scalar($v) && trim($v) == '' || is_array($v) && empty($v))) {
+                continue;
+            } // ignore blacklist and empties
+            $settings[$n] = $v; // this value should be saved
+        }
+
+        foreach ($defaults as $k) {
+            if (isset($settings['default_' . $k]) && $settings['default_' . $k] == '1') {
+                unset($settings[$k]);
+            }
+            unset($settings['default_' . $k]);
+        }
+
+        foreach ($settings as $n => $vl) {
+            if (is_array($vl)) {
+                $vl = implode(',', $vl);
+            }
+            if ((string)$vl != '') {
+                \EvolutionCMS\Models\UserSetting::updateOrCreate(['setting_name' => $n, 'user' => $this->userData['id']],
+                    ['setting_value' => $vl]);
+            }
+        }
 
         if ($this->cache) {
             EvolutionCMS()->clearCache('full');
@@ -111,9 +145,7 @@ class UserClearSettings implements ServiceInterface
      */
     public function validate(): bool
     {
-        $validator = \Validator::make($this->userData, $this->validate, $this->messages);
-        $this->validateErrors = $validator->errors()->toArray();
-        return !$validator->fails();
+        return true;
     }
 
 }

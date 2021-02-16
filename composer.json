@@ -12,7 +12,7 @@
   },
   "autoload": {
     "psr-4": {
-      "EvolutionCMS\\Users\\": "src/Users"
+      "EvolutionCMS\\": "src"
     }
   },
   "extra": {

@@ -1,4 +1,4 @@
-<?php namespace EvolutionCMS\Users\Actions;
+<?php namespace EvolutionCMS\Services\Users;
 
 use EvolutionCMS\Exceptions\ServiceActionException;
 use EvolutionCMS\Exceptions\ServiceValidationException;
@@ -6,7 +6,7 @@ use EvolutionCMS\Interfaces\ServiceInterface;
 use \EvolutionCMS\Models\User;
 use Illuminate\Support\Facades\Lang;
 
-class UserDelete implements ServiceInterface
+class UserRegistration implements ServiceInterface
 {
     /**
      * @var \string[][]
@@ -59,7 +59,9 @@ class UserDelete implements ServiceInterface
     public function getValidationRules(): array
     {
         return [
-            'id' => ['required','exists:users'],
+            'username' => ['required', 'unique:users'],
+            'password' => ['required', 'min:6', 'confirmed'],
+            'email' => ['required', 'unique:user_attributes'],
         ];
     }
 
@@ -69,20 +71,33 @@ class UserDelete implements ServiceInterface
     public function getValidationMessages(): array
     {
         return [
-            'id.required' => Lang::get("global.error_no_id"),
-            'id.exists' => Lang::get("global.user_doesnt_exist"),
+            'username.required' => Lang::get("global.required_field", ['field' => 'username']),
+            'password.required' => Lang::get("global.required_field", ['field' => 'password']),
+            'password.confirmed' => Lang::get("global.password_confirmed", ['field' => 'password']),
+            'email.required' => Lang::get("global.required_field", ['field' => 'email']),
+            'password.min' => Lang::get("global.password_gen_length"),
+            'username.unique' => Lang::get('global.username_unique'),
+            'email.unique' => Lang::get('global.email_unique'),
         ];
     }
 
     /**
-     * @return string
+     * @return \Illuminate\Database\Eloquent\Model
      * @throws ServiceActionException
      * @throws ServiceValidationException
      */
-    public function process(): string
+    public function process(): \Illuminate\Database\Eloquent\Model
     {
         if (!$this->checkRules()) {
             throw new ServiceActionException(\Lang::get('global.error_no_privileges'));
+        }
+
+        // invoke OnBeforeUserFormSave event
+        if ($this->events) {
+            EvolutionCMS()->invokeEvent("OnBeforeUserSave", array(
+                "mode" => "new",
+                "user" => &$this->userData,
+            ));
         }
 
         if (!$this->validate()) {
@@ -91,39 +106,34 @@ class UserDelete implements ServiceInterface
             throw $exception;
         }
 
-        if ($this->events) {
-            // invoke OnBeforeWUsrFormDelete event
-            EvolutionCMS()->invokeEvent("OnBeforeWUsrFormDelete",
-                array(
-                    "id"	=> $this->userData['id']
-                ));
+
+        $this->userData['clearPassword'] = $this->userData['password'];
+        $this->userData['password'] = EvolutionCMS()->getPasswordHash()->HashPassword($this->userData['password']);
+        if (isset($this->userData['dob'])) {
+            if (!is_numeric($this->userData['dob'])) $this->userData['dob'] = null;
         }
 
-        $username = \EvolutionCMS\Models\User::findOrFail($this->userData['id'])->username;
+        $user = User::create($this->userData);
+        $this->userData['internalKey'] = $user->getKey();
+        $user->attributes()->create($this->userData);
 
-        // delete the user.
-        \EvolutionCMS\Models\User::destroy($this->userData['id']);
-
+        // invoke OnWebSaveUser event
         if ($this->events) {
-            // invoke OnWebDeleteUser event
-            EvolutionCMS()->invokeEvent("OnWebDeleteUser",
-                array(
-                    "userid"		=> $this->userData['id'],
-                    "username"		=> $username
-                ));
-
-            // invoke OnWUsrFormDelete event
-            EvolutionCMS()->invokeEvent("OnWUsrFormDelete",
-                array(
-                    "id"	=> $this->userData['id']
-                ));
+            EvolutionCMS()->invokeEvent("OnUserFormSave", array(
+                "mode" => "new",
+                "userid" => $user->getKey(),
+                "username" => $user->username,
+                "userpassword" => $this->userData['clearPassword'],
+                "useremail" => $user->attributes->email,
+                "userfullname" => $user->attributes->fullname
+            ));
         }
 
         if ($this->cache) {
             EvolutionCMS()->clearCache('full');
         }
 
-        return $username;
+        return $user;
     }
 
     /**
@@ -131,7 +141,7 @@ class UserDelete implements ServiceInterface
      */
     public function checkRules(): bool
     {
-        return EvolutionCMS()->hasPermission('delete_user');
+        return true;
     }
 
     /**

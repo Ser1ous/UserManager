@@ -1,12 +1,12 @@
-<?php namespace EvolutionCMS\Users\Actions;
+<?php namespace EvolutionCMS\Services\Users;
 
 use EvolutionCMS\Exceptions\ServiceActionException;
 use EvolutionCMS\Exceptions\ServiceValidationException;
 use EvolutionCMS\Interfaces\ServiceInterface;
-use EvolutionCMS\Models\UserValue;
+use \EvolutionCMS\Models\User;
 use Illuminate\Support\Facades\Lang;
 
-class UserGetValues implements ServiceInterface
+class UserRepairPassword implements ServiceInterface
 {
     /**
      * @var \string[][]
@@ -38,6 +38,7 @@ class UserGetValues implements ServiceInterface
      */
     public $validateErrors;
 
+
     /**
      * UserRegistration constructor.
      * @param array $userData
@@ -46,11 +47,11 @@ class UserGetValues implements ServiceInterface
      */
     public function __construct(array $userData, bool $events = true, bool $cache = true)
     {
+        $this->validate = $this->getValidationRules();
+        $this->messages = $this->getValidationMessages();
         $this->userData = $userData;
         $this->events = $events;
         $this->cache = $cache;
-        $this->validate = $this->getValidationRules();
-        $this->messages = $this->getValidationMessages();
     }
 
     /**
@@ -58,7 +59,9 @@ class UserGetValues implements ServiceInterface
      */
     public function getValidationRules(): array
     {
-        return ['id' => ['required']];
+        return [
+            'id' => ['required', 'exists:users'],
+        ];
     }
 
     /**
@@ -66,43 +69,33 @@ class UserGetValues implements ServiceInterface
      */
     public function getValidationMessages(): array
     {
-        return ['id.required' => Lang::get("global.required_field", ['field' => 'username'])];
+        return [
+            'id.required' => Lang::get("global.required_field", ['field' => 'username']),
+            'id.exists' => Lang::get("global.could_not_find_user"),
+        ];
     }
 
     /**
-     * @return \Illuminate\Database\Eloquent\Model
+     * @return string
      * @throws ServiceActionException
      * @throws ServiceValidationException
      */
-    public function process(): array
+    public function process(): string
     {
         if (!$this->checkRules()) {
             throw new ServiceActionException(\Lang::get('global.error_no_privileges'));
         }
-
 
         if (!$this->validate()) {
             $exception = new ServiceValidationException();
             $exception->setValidationErrors($this->validateErrors);
             throw $exception;
         }
-
-        $values = UserValue::query()
-            ->select('site_tmplvars.name', 'user_values.value')
-            ->join('site_tmplvars', 'site_tmplvars.id', '=', 'user_values.tmplvarid')
-            ->where('userid', $this->userData['id'])
-            ->when(!empty($this->userData['tvNames']), function($query) {
-                $query->whereIn('site_tmplvars.name', $this->userData['tvNames']);
-            })
-            ->get()
-            ->pluck('value', 'name')
-            ->toArray();
-
-        if ($this->cache) {
-            EvolutionCMS()->clearCache('full');
-        }
-
-        return $values;
+        $user = User::find($this->userData['id']);
+        $hash = md5(generate_password(10) . time());
+        $user->cachepwd = $hash;
+        $user->save();
+        return $hash;
     }
 
     /**
@@ -118,7 +111,10 @@ class UserGetValues implements ServiceInterface
      */
     public function validate(): bool
     {
-        return true;
+        $validator = \Validator::make($this->userData, $this->validate, $this->messages);
+        $this->validateErrors = $validator->errors()->toArray();
+        return !$validator->fails();
     }
+
 
 }

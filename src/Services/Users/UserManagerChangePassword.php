@@ -1,4 +1,4 @@
-<?php namespace EvolutionCMS\Users\Actions;
+<?php namespace EvolutionCMS\Services\Users;
 
 use EvolutionCMS\Exceptions\ServiceActionException;
 use EvolutionCMS\Exceptions\ServiceValidationException;
@@ -6,7 +6,7 @@ use EvolutionCMS\Interfaces\ServiceInterface;
 use \EvolutionCMS\Models\User;
 use Illuminate\Support\Facades\Lang;
 
-class UserRepairPassword implements ServiceInterface
+class UserManagerChangePassword implements ServiceInterface
 {
     /**
      * @var \string[][]
@@ -60,7 +60,7 @@ class UserRepairPassword implements ServiceInterface
     public function getValidationRules(): array
     {
         return [
-            'id' => ['required', 'exists:users'],
+            'password' => ['required', 'min:6', 'confirmed'],
         ];
     }
 
@@ -70,13 +70,15 @@ class UserRepairPassword implements ServiceInterface
     public function getValidationMessages(): array
     {
         return [
-            'id.required' => Lang::get("global.required_field", ['field' => 'username']),
-            'id.exists' => Lang::get("global.could_not_find_user"),
+            'password.required' => Lang::get("global.required_field", ['field' => 'password']),
+            'password.confirmed' => Lang::get("global.password_confirmed", ['field' => 'password']),
+            'password.min' => Lang::get("global.password_gen_length"),
+
         ];
     }
 
     /**
-     * @return string
+     * @return \Illuminate\Database\Eloquent\Model
      * @throws ServiceActionException
      * @throws ServiceValidationException
      */
@@ -91,11 +93,21 @@ class UserRepairPassword implements ServiceInterface
             $exception->setValidationErrors($this->validateErrors);
             throw $exception;
         }
-        $user = User::find($this->userData['id']);
-        $hash = md5(generate_password(10) . time());
-        $user->cachepwd = $hash;
+
+
+        $uid = EvolutionCMS()->getLoginUserID('mgr');
+        $password = EvolutionCMS()->getPasswordHash()->HashPassword($this->userData['password']);
+        $user = \EvolutionCMS\Models\User::find($uid);
+        $user->password = $password;
         $user->save();
-        return $hash;
+
+        // invoke OnManagerChangePassword event
+        EvolutionCMS()->invokeEvent('OnManagerChangePassword', array(
+            'userid' => $uid,
+            'username' => $_SESSION['mgrShortname'],
+            'userpassword' => $this->userData['password']
+        ));
+        return $user;
     }
 
     /**

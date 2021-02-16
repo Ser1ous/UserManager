@@ -1,14 +1,11 @@
-<?php namespace EvolutionCMS\Users\Actions;
+<?php namespace EvolutionCMS\Services\Users;
 
 use EvolutionCMS\Exceptions\ServiceActionException;
 use EvolutionCMS\Exceptions\ServiceValidationException;
 use EvolutionCMS\Interfaces\ServiceInterface;
 use \EvolutionCMS\Models\User;
-use Illuminate\Support\Facades\Lang;
-use Carbon\Carbon;
-use Illuminate\Support\Str;
 
-class UserRefreshToken implements ServiceInterface
+class UserLogout implements ServiceInterface
 {
     /**
      * @var \string[][]
@@ -43,7 +40,7 @@ class UserRefreshToken implements ServiceInterface
     /**
      * @var User
      */
-    public $user;
+    private $user;
     /**
      * @var int
      */
@@ -59,7 +56,7 @@ class UserRefreshToken implements ServiceInterface
     private $userSettings;
 
     /**
-     * UserRefreshToken constructor.
+     * UserRegistration constructor.
      * @param array $userData
      * @param bool $events
      * @param bool $cache
@@ -78,7 +75,7 @@ class UserRefreshToken implements ServiceInterface
      */
     public function getValidationRules(): array
     {
-        return ['refresh_token' => ['required', 'exists:users']];
+        return [];
     }
 
     /**
@@ -86,7 +83,7 @@ class UserRefreshToken implements ServiceInterface
      */
     public function getValidationMessages(): array
     {
-        return ['refresh_token.required' => Lang::get("global.required_field", ['field' => 'refresh_token'])];
+        return [];
     }
 
     /**
@@ -94,7 +91,7 @@ class UserRefreshToken implements ServiceInterface
      * @throws ServiceActionException
      * @throws ServiceValidationException
      */
-    public function process(): \Illuminate\Database\Eloquent\Model
+    public function process(): string
     {
         if (!$this->checkRules()) {
             throw new ServiceActionException(\Lang::get('global.error_no_privileges'));
@@ -107,17 +104,46 @@ class UserRefreshToken implements ServiceInterface
         }
 
 
-        $user = \EvolutionCMS\Models\User::query()
-            ->where('refresh_token', $this->userData['refresh_token'])->first();
-        if (is_null($user)) {
-            throw new ServiceActionException(\Lang::get('global.could_not_find_user'));
+        $internalKey = EvolutionCMS()->getLoginUserID();
+        if (!$internalKey) {
+            return false;
         }
+        $user = User::query()->find($internalKey);
+        $username = '';
+        if (!is_null($user)) {
+            $user->refresh_token = '';
+            $user->access_token = '';
+            $user->valid_to = NULL;
+            $user->save();
+            $username = $_SESSION['mgrShortname'];
+            $sid = EvolutionCMS()->sid;
+            if ($this->events) {
+                // invoke OnBeforeManagerLogout event
+                EvolutionCMS()->invokeEvent("OnBeforeManagerLogout",
+                    array(
+                        "userid" => $internalKey,
+                        "username" => $username
+                    ));
+            }
+        }
+        if (isset($_COOKIE[session_name()])) {
+            setcookie(session_name(), '', 0, MODX_BASE_URL);
+        }
+        @session_destroy(); // this sometimes generate an error in iis
 
-        $user->access_token = hash('sha256', Str::random(32));
-        $user->valid_to = Carbon::now()->addHours(11);
-        $user->save();
+        \EvolutionCMS\Models\ActiveUserLock::query()->where('sid', $sid)->delete();
 
-        return $user;
+        \EvolutionCMS\Models\ActiveUserSession::query()->where('sid', $sid)->delete();
+
+        if ($this->events) {
+            // invoke OnManagerLogout event
+            EvolutionCMS()->invokeEvent("OnManagerLogout",
+                array(
+                    "userid" => $internalKey,
+                    "username" => $username
+                ));
+        }
+        return $username;
     }
 
     /**
@@ -133,9 +159,7 @@ class UserRefreshToken implements ServiceInterface
      */
     public function validate(): bool
     {
-        $validator = \Validator::make($this->userData, $this->validate, $this->messages);
-        $this->validateErrors = $validator->errors()->toArray();
-        return !$validator->fails();
+        return true;
     }
 
 

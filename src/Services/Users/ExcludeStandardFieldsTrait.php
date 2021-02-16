@@ -1,6 +1,6 @@
 <?php
 
-namespace EvolutionCMS\Users\Actions;
+namespace EvolutionCMS\Services\Users;
 
 trait ExcludeStandardFieldsTrait
 {
